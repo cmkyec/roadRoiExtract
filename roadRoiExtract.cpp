@@ -174,16 +174,24 @@ void lineConvert(struct laneDetectorLine& innerLine,
 	cv::Point top, bottom;
 	top = innerLine.top;
 	bottom = innerLine.bottom;
+	// here bottom x may be larger than image width or smaller than zero.
 	bottom.x = (bottom.x - top.x) * (imgSize.height - 1 - top.y) / (bottom.y - top.y) + top.x;
 	bottom.y = imgSize.height - 1;
 	if (top.y < 0) {
 		top.x = top.x - (top.x - bottom.x) * top.y / (top.y - bottom.y);
 		top.y = 0;
 	}
+	if (bottom.x > imgSize.width - 1) {
+		bottom.x = imgSize.width - 1;
+		bottom.y = top.y - (top.x - bottom.x) * (top.y - bottom.y) / (top.x - bottom.y);
+	}
+	if (bottom.x < 0) {
+		bottom.x = 0;
+		bottom.y = top.y - (top.y - bottom.y) * top.x / (top.x - bottom.x);
+	}
 	outerLine.m_top = top;
 	outerLine.m_bottom = bottom;
 }
-
 
 bool getLeftAndRightLane(const cv::Mat& cameraImg, 
 		         struct lane& leftLane, 
