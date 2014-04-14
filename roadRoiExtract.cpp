@@ -216,6 +216,7 @@ bool getLeftAndRightLane(const cv::Mat& cameraImg,
 	return false;
 }
 
+// functions for get road roi region
 /**
  * The image from the camera always contains some regions do not belong to the road.
  * For our event detector, we are only interested in the road region.
@@ -271,6 +272,21 @@ bool getRoadRoiImage(const cv::Mat& cameraImg,
 
 	getRoadRoi(cameraImg, roadImg, left, right);
 	return true;
+}
+
+// functions for get middle lane
+#define CAMERA_ON_LEFT   0
+#define CAMERA_ON_RIGHT  1
+#define CAMERA_ON_MIDDLE 2
+int cameraPosition(struct lane& leftLane,
+		   struct lane& rightLane,
+	           int imgWidth)
+{
+	int avePos = (leftLane.m_bottom.x + rightLane.m_bottom.x) / 2;
+	if (std::abs(avePos - imgWidth) < (imgWidth / 5))
+		return CAMERA_ON_MIDDLE;
+	else
+		return (avePos > imgWidth) ? CAMERA_ON_LEFT : CAMERA_ON_RIGHT;
 }
 
 
