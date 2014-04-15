@@ -24,6 +24,19 @@ bool getLeftAndRightLane(const cv::Mat& cameraImg,
 			 struct lane& rightLane);
 
 /**
+ * detect the left lane and right lane of the road in the cameraImg.
+ *
+ * @param roadImg the original road image
+ * @param leftLane the detected left lane of the road image
+ * @param middleLane the detected middle lane of the road image
+ * @param rightLane the detected right lane of the road image
+ */
+bool getThreeLane(const cv::Mat& cameraImg, 
+		  struct lane& leftLane, 
+	          struct lane& middleLane, 
+		  struct lane& rightLane);
+
+/**
  * extract the road roi image from the original camera image.
  */
 bool getRoadRoiImage(const cv::Mat& cameraImg,

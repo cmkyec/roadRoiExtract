@@ -149,11 +149,11 @@ int lineFilter(std::vector<cv::Vec4i>& lines,
  * But if the lane bottom is outside the image, then it should be changed to the position
  * intersected with the left or right border of the image.
  */
-void laneComplete(struct laneDetectorLine& lane, cv::Size imgSize)
+void laneComplete(struct lane& lane, cv::Size imgSize)
 {
 	cv::Point top, bottom;
-	top = lane.top;
-	bottom = lane.bottom;
+	top = lane.m_top;
+	bottom = lane.m_bottom;
 	// here bottom x may be larger than image width or smaller than zero.
 	bottom.x = (bottom.x - top.x) * (imgSize.height - 1 - top.y) / (bottom.y - top.y) + top.x;
 	bottom.y = imgSize.height - 1;
@@ -169,8 +169,8 @@ void laneComplete(struct laneDetectorLine& lane, cv::Size imgSize)
 		bottom.y = top.y - (top.y - bottom.y) * top.x / (top.x - bottom.x);
 		bottom.x = 0;
 	}
-	lane.top = top;
-	lane.bottom = bottom;
+	lane.m_top = top;
+	lane.m_bottom = bottom;
 }
 
 /**
@@ -217,17 +217,33 @@ bool getLeftAndRightLane(const cv::Mat& cameraImg,
 	lineDetector(lineCandidateImg, rawLines);
 	if (rawLines.size() < 3) return false;
 
+	//cv::Mat tmp;
+	//cameraImg.copyTo(tmp);
+	//for (std::size_t i = 0; i < rawLines.size(); ++i) {
+	//	cv::Point start(rawLines[i][0], rawLines[i][1]);
+	//	cv::Point end(rawLines[i][2], rawLines[i][3]);
+	//	cv::line(tmp, start, end, cv::Scalar(0, 255, 255), 2);
+	//}
+
 	std::vector<struct laneDetectorLine> lineFiltered;
 	if (lineFilter(rawLines, cameraImg.size(), lineFiltered) == 0) return false;
+
+	//cv::Mat tmp;
+	//cameraImg.copyTo(tmp);
+	//for (std::size_t i = 0; i < lineFiltered.size(); ++i) {
+	//	cv::Point start = lineFiltered[i].top;
+	//	cv::Point end = lineFiltered[i].bottom;
+	//	cv::line(tmp, start, end, cv::Scalar(0, 255, 255), 2);
+	//}
 	
 	struct laneDetectorLine left, right;
 	getLeftAndRightLane(lineFiltered, left, right);
 
-	laneComplete(left, cameraImg.size());
-	laneComplete(right, cameraImg.size());
-
 	lineConvert(left, leftLane);
 	lineConvert(right, rightLane);
+
+	laneComplete(leftLane, cameraImg.size());
+	laneComplete(rightLane, cameraImg.size());
 
 	return true;
 }
@@ -270,5 +286,160 @@ bool getRoadRoiImage(const cv::Mat& cameraImg,
 }
 
 // functions for get middle lane
+inline void getMarkerPoint(const lane& la, int imgWidth, cv::Point& p)
+{
+	if (la.m_bottom.x == 0 || la.m_bottom.x == imgWidth - 1) {
+		p = la.m_bottom;
+	} else {
+		p.x = (la.m_top.x + la.m_bottom.x) / 2;
+		p.y = (la.m_top.y + la.m_bottom.y) / 2;
+	}
+}
+
+void markerPointAdjust(cv::Point& left, cv::Point& right,
+	               const cv::Mat& roadRoiImg)
+{
+	if (left.y == right.y) return;
+	if (left.y > right.y) {
+		int x = 0;
+		const cv::Vec3b* p = roadRoiImg.ptr<cv::Vec3b>(right.y);
+		for (; x < roadRoiImg.cols - 1; ++x) {
+			if (p[x] != cv::Vec3b(0, 0, 0)) break;
+		}
+		left.x = x;
+		left.y = right.y;
+	} else {
+		int x = roadRoiImg.cols - 1;
+		const cv::Vec3b* p = roadRoiImg.ptr<cv::Vec3b>(left.y);
+		for (; x > 0; --x) {
+			if (p[x] != cv::Vec3b(0, 0, 0)) break;
+		}
+		right.x = x;
+		right.y = left.y;
+	}
+}
+
+void getMarkerImage(cv::Mat& roadRoiImg,
+		    const lane& leftLane,
+		    const lane& rightLane,
+		    cv::Mat& markerImg)
+{
+	cv::Point leftMarkerPoint, rightMarkerPoint;
+	getMarkerPoint(leftLane, roadRoiImg.cols, leftMarkerPoint);
+	getMarkerPoint(rightLane, roadRoiImg.cols, rightMarkerPoint);
+	markerPointAdjust(leftMarkerPoint, rightMarkerPoint, roadRoiImg);
+
+	int r_b_x = rightLane.m_bottom.x, l_b_x = leftLane.m_bottom.x;
+	int w_half = roadRoiImg.cols / 2;
+	int markerPointGap = rightMarkerPoint.x - leftMarkerPoint.x + 1;
+	int leftMarkerLen = markerPointGap / 2 *
+		std::abs(r_b_x - w_half) / (std::abs(r_b_x - w_half) + std::abs(l_b_x - w_half));
+	int rightMarkerLen = markerPointGap / 2 *
+		std::abs(l_b_x - w_half) / (std::abs(r_b_x - w_half) + std::abs(l_b_x - w_half));
+	// marker length should be in the range [1/5, 1/3].  // to be improved.
+	if (leftMarkerLen < markerPointGap / 5) leftMarkerLen = markerPointGap / 5;
+	if (rightMarkerLen < markerPointGap / 5) rightMarkerLen = markerPointGap / 5;
+	if (leftMarkerLen > markerPointGap / 3) leftMarkerLen = markerPointGap / 3;
+	if (rightMarkerLen > markerPointGap / 3) rightMarkerLen = markerPointGap / 3;
+	
+	markerImg.create(roadRoiImg.size(), CV_32S);
+	markerImg.setTo(0);
+	for (int r = 0; r < 10; ++r) {  // marker region height set to 10 pixels
+		for (int c = 0; c < leftMarkerLen; ++c) {
+			cv::Point pos(leftMarkerPoint.x + c, leftMarkerPoint.y + r);
+			if (pos.x > markerImg.cols - 1) pos.x = markerImg.cols - 1;
+			if (pos.y > markerImg.rows - 1) pos.y = markerImg.rows - 1;
+			if (roadRoiImg.at<cv::Vec3b>(pos) != cv::Vec3b(0, 0, 0)) {
+				markerImg.at<int>(pos) = 1;
+				//roadRoiImg.at<cv::Vec3b>(pos) = cv::Vec3b(0, 255, 255);
+			}
+		}
+		for (int c = 0; c < rightMarkerLen; ++c) {
+			cv::Point pos(rightMarkerPoint.x - c, rightMarkerPoint.y + r);
+			if (pos.x < 0) pos.x = 0;
+			if (pos.y > markerImg.rows - 1) pos.y = markerImg.rows - 1;
+			if (roadRoiImg.at<cv::Vec3b>(pos) != cv::Vec3b(0, 0, 0)) {
+				markerImg.at<int>(pos) = 2;
+				//roadRoiImg.at<cv::Vec3b>(pos) = cv::Vec3b(0, 255, 255);
+			}
+		}
+	}
+}
+
+bool getMiddleLane(const cv::Mat& roadRoiImage,
+		   cv::Mat& markerImg, 
+		   cv::Point& middleLaneBottom)
+{
+	cv::watershed(roadRoiImage, markerImg);
+
+	// get the watershed boundary
+	cv::Mat maskImg(roadRoiImage.size(), CV_8UC1);
+	maskImg.setTo(0);
+	// here start from 5, remove the boundary of the image
+	for (int r = 5; r < markerImg.rows - 5; ++r) {
+		for (int c = 5; c < markerImg.cols - 5; ++c) {
+			if (markerImg.at<int>(r, c) == -1 &&
+				roadRoiImage.at<cv::Vec3b>(r, c) != cv::Vec3b(0, 0, 0) &&
+				roadRoiImage.at<cv::Vec3b>(r, c - 5) != cv::Vec3b(0, 0, 0) &&
+				roadRoiImage.at<cv::Vec3b>(r, c + 5) != cv::Vec3b(0, 0, 0)) {
+				maskImg.at<unsigned char>(r, c) = 255;
+			}
+		}
+	}
+
+	int houghThreshold = 70;
+	std::vector<cv::Vec4i> lines;
+	cv::HoughLinesP(maskImg, lines, 1, CV_PI / 180, houghThreshold, 10, 10);
+	if (lines.size() == 0) return false;
+
+	// extract the longest line
+	cv::Vec4i lane = lines[0];
+	int length = (lane[0] - lane[2]) * (lane[0] - lane[2]) + (lane[1] - lane[3]) * (lane[1] - lane[3]);
+	for (std::size_t i = 1; i < lines.size(); ++i) {
+		int l = (lines[i][0] - lines[i][2]) * (lines[i][0] - lines[i][2]) +
+			(lines[i][1] - lines[i][3]) * (lines[i][1] - lines[i][3]);
+		if (l > length) {
+			lane = lines[i];
+			length = l;
+		}
+	}
+
+	cv::Point a(lane[0], lane[1]), b(lane[2], lane[3]);
+	if (a.y > b.y) middleLaneBottom = a;
+	else
+		middleLaneBottom = b;
+	return true;
+}
+
+bool getThreeLane(const cv::Mat& cameraImg,
+		  struct lane& leftLane,
+		  struct lane& middleLane,
+		  struct lane& rightLane)
+{
+	if (!getLeftAndRightLane(cameraImg, leftLane, rightLane)) {
+		return false;
+	}
+	cv::Mat roadRoiImage;
+	getRoadRoi(cameraImg, roadRoiImage, leftLane, rightLane);
+
+	cv::Mat markerImg;  // marker image for watershed algorithm
+	getMarkerImage(roadRoiImage, leftLane, rightLane, markerImg);
+
+	cv::Point middleLaneBottom;
+	getMiddleLane(roadRoiImage, markerImg, middleLaneBottom);
+
+	cv::Point middleLaneTop;
+	if (leftLane.m_top == rightLane.m_top) {
+		middleLaneTop = leftLane.m_top;
+	} else {
+		middleLaneTop.x = (leftLane.m_top.x + rightLane.m_top.x) / 2;
+		middleLaneTop.y = 0;
+	}
+	middleLane.m_top = middleLaneTop;
+	middleLane.m_bottom = middleLaneBottom;
+	laneComplete(middleLane, cameraImg.size());
+
+	return true;
+}
 
 }
