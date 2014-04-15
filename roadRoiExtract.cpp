@@ -142,6 +142,38 @@ int lineFilter(std::vector<cv::Vec4i>& lines,
 }
 
 /**
+ * If lane top is outside the image, it should be changed to the position intersect 
+ * with the top border of the image.
+ *
+ * The lane bottom should be the position intersected with the bottom border of the image.
+ * But if the lane bottom is outside the image, then it should be changed to the position
+ * intersected with the left or right border of the image.
+ */
+void laneComplete(struct laneDetectorLine& lane, cv::Size imgSize)
+{
+	cv::Point top, bottom;
+	top = lane.top;
+	bottom = lane.bottom;
+	// here bottom x may be larger than image width or smaller than zero.
+	bottom.x = (bottom.x - top.x) * (imgSize.height - 1 - top.y) / (bottom.y - top.y) + top.x;
+	bottom.y = imgSize.height - 1;
+	if (top.y < 0) {
+		top.x = top.x - (top.x - bottom.x) * top.y / (top.y - bottom.y);
+		top.y = 0;
+	}
+	if (bottom.x > imgSize.width - 1) {
+		bottom.y = top.y - (top.x - bottom.x) * (top.y - bottom.y) / (top.x - bottom.y);
+		bottom.x = imgSize.width - 1;
+	}
+	if (bottom.x < 0) {
+		bottom.y = top.y - (top.y - bottom.y) * top.x / (top.x - bottom.x);
+		bottom.x = 0;
+	}
+	lane.top = top;
+	lane.bottom = bottom;
+}
+
+/**
  * get the left and right road lane according the angles.
  */
 void getLeftAndRightLane(std::vector<struct laneDetectorLine>& lines,
@@ -167,30 +199,11 @@ void getLeftAndRightLane(std::vector<struct laneDetectorLine>& lines,
 /**
  * convert struct laneDetectorLine to struct lane. 
  */
-void lineConvert(struct laneDetectorLine& innerLine,
-		 struct lane& outerLine,
-		 const cv::Size& imgSize)
+inline void lineConvert(struct laneDetectorLine& innerLine,
+			struct lane& outerLine)
 {
-	cv::Point top, bottom;
-	top = innerLine.top;
-	bottom = innerLine.bottom;
-	// here bottom x may be larger than image width or smaller than zero.
-	bottom.x = (bottom.x - top.x) * (imgSize.height - 1 - top.y) / (bottom.y - top.y) + top.x;
-	bottom.y = imgSize.height - 1;
-	if (top.y < 0) {
-		top.x = top.x - (top.x - bottom.x) * top.y / (top.y - bottom.y);
-		top.y = 0;
-	}
-	if (bottom.x > imgSize.width - 1) {
-		bottom.x = imgSize.width - 1;
-		bottom.y = top.y - (top.x - bottom.x) * (top.y - bottom.y) / (top.x - bottom.y);
-	}
-	if (bottom.x < 0) {
-		bottom.x = 0;
-		bottom.y = top.y - (top.y - bottom.y) * top.x / (top.x - bottom.x);
-	}
-	outerLine.m_top = top;
-	outerLine.m_bottom = bottom;
+	outerLine.m_top = innerLine.top;
+	outerLine.m_bottom = innerLine.bottom;
 }
 
 bool getLeftAndRightLane(const cv::Mat& cameraImg, 
@@ -210,10 +223,13 @@ bool getLeftAndRightLane(const cv::Mat& cameraImg,
 	struct laneDetectorLine left, right;
 	getLeftAndRightLane(lineFiltered, left, right);
 
-	lineConvert(left, leftLane, cameraImg.size());
-	lineConvert(right, rightLane, cameraImg.size());
+	laneComplete(left, cameraImg.size());
+	laneComplete(right, cameraImg.size());
 
-	return false;
+	lineConvert(left, leftLane);
+	lineConvert(right, rightLane);
+
+	return true;
 }
 
 // functions for get road roi region
@@ -227,26 +243,14 @@ bool getLeftAndRightLane(const cv::Mat& cameraImg,
  * @param[out] rightLane the right lane of the road
  */
 void getRoadRoi(const cv::Mat& srcImg, cv::Mat& roadRoiImg, 
-		struct laneDetectorLine leftLane, 
-		struct laneDetectorLine rightLane) 
+		struct lane& leftLane, 
+		struct lane& rightLane) 
 {
 	cv::Mat maskImg(srcImg.size(), CV_8UC1);
 	maskImg.setTo(0);
 
-	// get the bottom intersection of the left lane and the image boundary
-	cv::Point top, bottom;
-	top = leftLane.top;
-	bottom = leftLane.bottom;
-	bottom.x = (bottom.x - top.x) * (maskImg.rows - 1 - top.y) / (bottom.y - top.y) + top.x;
-	bottom.y = maskImg.rows - 1;
-	cv::line(maskImg, top, bottom, cv::Scalar::all(255), 1);
-
-	// get the bottom intersection of the rightlane and the image boundary
-	top = rightLane.top;
-	bottom = rightLane.bottom;
-	bottom.x = (bottom.x - top.x) * (maskImg.rows - 1 - top.y) / (bottom.y - top.y) + top.x;
-	bottom.y = maskImg.rows - 1;
-	cv::line(maskImg, top, bottom, cv::Scalar::all(255), 1);
+	cv::line(maskImg, leftLane.m_top, leftLane.m_bottom, cv::Scalar::all(255), 1);
+	cv::line(maskImg, rightLane.m_top, rightLane.m_bottom, cv::Scalar::all(255), 1);
 
 	cv::Point seedPoint(maskImg.cols / 2, maskImg.rows / 2);
 	cv::floodFill(maskImg, seedPoint, cv::Scalar::all(255));
@@ -257,37 +261,14 @@ void getRoadRoi(const cv::Mat& srcImg, cv::Mat& roadRoiImg,
 bool getRoadRoiImage(const cv::Mat& cameraImg,
 		     cv::Mat& roadImg)
 {
-	cv::Mat lineCandidateImg;
-	getLineCandidatesImg(cameraImg, lineCandidateImg);
-
-	std::vector<cv::Vec4i> rawLines;
-	lineDetector(lineCandidateImg, rawLines);
-	if (rawLines.size() < 3) return false;
-
-	std::vector<struct laneDetectorLine> lineFiltered;
-	if (lineFilter(rawLines, cameraImg.size(), lineFiltered) == 0) return false;
-	
-	struct laneDetectorLine left, right;
-	getLeftAndRightLane(lineFiltered, left, right);
-
-	getRoadRoi(cameraImg, roadImg, left, right);
+	struct lane leftLane, rightLane;
+	if (!getLeftAndRightLane(cameraImg, leftLane, rightLane)) {
+		return false;
+	}
+	getRoadRoi(cameraImg, roadImg, leftLane, rightLane);
 	return true;
 }
 
 // functions for get middle lane
-#define CAMERA_ON_LEFT   0
-#define CAMERA_ON_RIGHT  1
-#define CAMERA_ON_MIDDLE 2
-int cameraPosition(struct lane& leftLane,
-		   struct lane& rightLane,
-	           int imgWidth)
-{
-	int avePos = (leftLane.m_bottom.x + rightLane.m_bottom.x) / 2;
-	if (std::abs(avePos - imgWidth) < (imgWidth / 5))
-		return CAMERA_ON_MIDDLE;
-	else
-		return (avePos > imgWidth) ? CAMERA_ON_LEFT : CAMERA_ON_RIGHT;
-}
-
 
 }
