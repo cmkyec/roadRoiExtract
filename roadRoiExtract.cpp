@@ -162,7 +162,7 @@ void laneComplete(struct laneDetectorLine& lane, cv::Size imgSize)
 		top.y = 0;
 	}
 	if (bottom.x > imgSize.width - 1) {
-		bottom.y = top.y - (top.x - bottom.x) * (top.y - bottom.y) / (top.x - bottom.y);
+		bottom.y = top.y - (top.x - imgSize.width + 1) * (top.y - bottom.y) / (top.x - bottom.x);
 		bottom.x = imgSize.width - 1;
 	}
 	if (bottom.x < 0) {

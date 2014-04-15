@@ -3,7 +3,7 @@
 
 int main()
 {
-	cv::Mat img = cv::imread("./roadImages/road_6.png");
+	cv::Mat img = cv::imread("./roadImages/rain_4.png");
 	cv::Mat roadImg;
 	gentech::getRoadRoiImage(img, roadImg);
 
@@ -16,6 +16,5 @@ int main()
 	cv::imshow("road", roadImg);
 	cv::waitKey(0);
 	cv::destroyWindow("road");
-	cv::imwrite("roadImg_2.png", roadImg);
 	return 0;
 }
